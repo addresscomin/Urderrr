@@ -1,22 +1,36 @@
 name: Build APK
 on:
-  push:
   workflow_dispatch:
+  push:
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Extract zip and find project
+        run: |
+          if [ -f DisciplineGuard_v4.zip ]; then
+            unzip -q -o DisciplineGuard_v4.zip -d _src
+          fi
+          F=$(find . -name settings.gradle.kts | head -1)
+          if [ -z "$F" ]; then echo "settings.gradle.kts nahi mila"; ls -R | head -50; exit 1; fi
+          echo "PROJECT_DIR=$(dirname "$F")" >> $GITHUB_ENV
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.9
+
       - name: Build debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
         run: gradle assembleDebug --no-daemon --stacktrace
+
       - uses: actions/upload-artifact@v4
         with:
           name: DisciplineGuard-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
