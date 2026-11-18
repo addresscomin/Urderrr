@@ -8,13 +8,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract zip and find project
+      - name: Find project (extracts a zip in the repo if needed)
         run: |
-          if [ -f DisciplineGuard_v4.zip ]; then
-            unzip -q -o DisciplineGuard_v4.zip -d _src
+          Z=$(ls DisciplineGuard_v*.zip 2>/dev/null | sort -V | tail -1 || true)
+          if [ -n "$Z" ]; then
+            rm -rf _src
+            unzip -q -o "$Z" -d _src
           fi
-          F=$(find . -name settings.gradle.kts | head -1)
-          if [ -z "$F" ]; then echo "settings.gradle.kts nahi mila"; ls -R | head -50; exit 1; fi
+          F=$(find . -name settings.gradle.kts -not -path "./.git/*" | sort | tail -1)
+          if [ -z "$F" ]; then echo "settings.gradle.kts not found"; ls -R | head -50; exit 1; fi
           echo "PROJECT_DIR=$(dirname "$F")" >> $GITHUB_ENV
 
       - uses: actions/setup-java@v4
