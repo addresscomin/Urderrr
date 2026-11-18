@@ -8,7 +8,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          unzip -q DisciplineGuard_v4.zip -x "DisciplineGuard/.github/*"
+          unzip -q DisciplineGuard_v5.zip -x "DisciplineGuard/.github/*"
           cp -a DisciplineGuard/. .
           rm -rf DisciplineGuard DisciplineGuard_v4.zip
           git config user.name "github-actions"
