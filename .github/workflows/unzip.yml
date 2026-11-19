@@ -8,11 +8,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          unzip -q DisciplineGuard_v5.zip -x "DisciplineGuard/.github/*"
-          cp -a DisciplineGuard/. .
-          rm -rf DisciplineGuard DisciplineGuard_v4.zip
+          F=$(ls DisciplineGuard_v*.zip | grep -v cleaner | sort -V | tail -1)
+          C=$(ls DisciplineGuard_v*cleaner*.zip | sort -V | tail -1)
+          unzip -q -o "$F" -d FocusGuard
+          unzip -q -o "$C" -d GuardCleaner
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add -A
-          git commit -m "Extract project"
+          git commit -m "Extract projects" || echo "nothing to commit"
           git push
