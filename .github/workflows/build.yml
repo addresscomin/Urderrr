@@ -1,4 +1,4 @@
-name: Build APK
+name: Build APKs
 on:
   workflow_dispatch:
   push:
@@ -8,16 +8,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Find project (extracts a zip in the repo if needed)
+      - name: Extract zips
         run: |
-          Z=$(ls DisciplineGuard_v*.zip 2>/dev/null | sort -V | tail -1 || true)
-          if [ -n "$Z" ]; then
-            rm -rf _src
-            unzip -q -o "$Z" -d _src
-          fi
-          F=$(find . -name settings.gradle.kts -not -path "./.git/*" | sort | tail -1)
-          if [ -z "$F" ]; then echo "settings.gradle.kts not found"; ls -R | head -50; exit 1; fi
-          echo "PROJECT_DIR=$(dirname "$F")" >> $GITHUB_ENV
+          F=$(ls DisciplineGuard_v*.zip 2>/dev/null | grep -v cleaner | sort -V | tail -1 || true)
+          C=$(ls DisciplineGuard_v*cleaner*.zip 2>/dev/null | sort -V | tail -1 || true)
+          rm -rf _focus _clean
+          if [ -n "$F" ]; then unzip -q -o "$F" -d _focus; fi
+          if [ -n "$C" ]; then unzip -q -o "$C" -d _clean; fi
+          echo "Focus zip: $F"
+          echo "Cleaner zip: $C"
 
       - uses: actions/setup-java@v4
         with:
@@ -28,11 +27,30 @@ jobs:
         with:
           gradle-version: 8.9
 
-      - name: Build debug APK
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Build Guard Cleaner
+        continue-on-error: true
+        run: |
+          P=$(find _clean -name settings.gradle.kts 2>/dev/null | head -1)
+          if [ -z "$P" ]; then echo "no cleaner project"; exit 0; fi
+          cd "$(dirname "$P")"
+          gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Build Focus Guard
+        continue-on-error: true
+        run: |
+          P=$(find _focus -name settings.gradle.kts 2>/dev/null | head -1)
+          if [ -z "$P" ]; then echo "no focus project"; exit 0; fi
+          cd "$(dirname "$P")"
+          gradle assembleDebug --no-daemon --stacktrace
 
       - uses: actions/upload-artifact@v4
         with:
-          name: DisciplineGuard-apk
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          name: GuardCleaner-apk
+          path: _clean/**/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FocusGuard-apk
+          path: _focus/**/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
