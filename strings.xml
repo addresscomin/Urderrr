@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Focus Guard</string>
+    <string name="acc_desc">Enforces your daily phone limit, sleep time, timetable and prayer times by blocking apps.</string>
+</resources>
