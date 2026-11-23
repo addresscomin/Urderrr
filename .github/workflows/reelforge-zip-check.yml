@@ -1,0 +1,121 @@
+name: ReelForge ZIP Build Check
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/zm-clip-ai
+    paths:
+      - "reelforge-updated.zip"
+      - ".github/workflows/reelforge-zip-check.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  inspect-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract and repair uploaded ReelForge archive
+        run: |
+          test -s reelforge-updated.zip
+          mkdir -p /tmp/reelforge-src
+          unzip -q reelforge-updated.zip -d /tmp/reelforge-src
+          REQ=/tmp/reelforge-src/reelforge/requirements.txt
+          if ! grep -qxF requests "$REQ"; then
+            echo "requests" >> "$REQ"
+            echo "Fixed missing runtime dependency: requests"
+            rm -f reelforge-updated.zip
+            cd /tmp/reelforge-src
+            zip -qr "$GITHUB_WORKSPACE/reelforge-updated.zip" reelforge
+            cd "$GITHUB_WORKSPACE"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add reelforge-updated.zip
+            git commit -m "Fix ReelForge missing requests dependency"
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          else
+            echo "requests dependency already present."
+          fi
+          echo "=== PROJECT README ==="
+          cat /tmp/reelforge-src/reelforge/README.md
+          echo "=== REQUIREMENTS ==="
+          cat "$REQ"
+          echo "=== DOCKERFILE ==="
+          cat /tmp/reelforge-src/reelforge/Dockerfile
+          echo "=== API ENTRYPOINT ==="
+          sed -n '1,260p' /tmp/reelforge-src/reelforge/app/main.py
+          echo "=== APP CONFIG ==="
+          sed -n '1,220p' /tmp/reelforge-src/reelforge/app/config.py
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate Python source
+        run: |
+          python - <<'PY'
+          import pathlib, py_compile, sys
+          root = pathlib.Path("/tmp/reelforge-src/reelforge")
+          files = list(root.rglob("*.py"))
+          print(f"Python files found: {len(files)}")
+          failures = []
+          for path in files:
+              try:
+                  py_compile.compile(str(path), doraise=True)
+              except Exception as exc:
+                  failures.append((path, exc))
+          for path, exc in failures:
+              print(f"COMPILE ERROR: {path}: {exc}")
+          if failures:
+              sys.exit(1)
+          print("Python syntax check passed.")
+          PY
+
+      - name: Install dependencies and run tests
+        working-directory: /tmp/reelforge-src/reelforge
+        env:
+          PYTHONPATH: /tmp/reelforge-src/reelforge
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+          python -m pytest -q
+
+      - name: Smoke-test FastAPI application
+        working-directory: /tmp/reelforge-src/reelforge
+        env:
+          PYTHONPATH: /tmp/reelforge-src/reelforge
+          DATA_DIR: /tmp/reelforge-smoke-data
+        run: |
+          python - <<'PY'
+          from fastapi.testclient import TestClient
+          from app.main import app
+
+          paths = sorted({route.path for route in app.routes if hasattr(route, "path")})
+          print("Registered API routes:")
+          for path in paths:
+              print(path)
+
+          with TestClient(app) as client:
+              response = client.get("/openapi.json")
+              assert response.status_code == 200, f"OpenAPI returned {response.status_code}"
+              schema = response.json()
+              assert "paths" in schema, "OpenAPI schema has no paths"
+              print(f"OpenAPI OK; {len(schema['paths'])} API paths registered")
+
+              page = client.get("/")
+              assert page.status_code == 200, f"Homepage returned {page.status_code}"
+              assert "text/html" in page.headers.get("content-type", ""), "Homepage is not HTML"
+              print(f"Homepage served successfully: HTTP {page.status_code}")
+          PY
+
+      - name: Verify web entrypoint
+        run: |
+          test -s /tmp/reelforge-src/reelforge/web/index.html
+          test -s /tmp/reelforge-src/reelforge/web/manifest.json
+          echo "ReelForge frontend entrypoint checks passed."
