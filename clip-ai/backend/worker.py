@@ -105,7 +105,14 @@ def process_job(job_id):
             mp4 = out_dir / f"clip-{n:02}.mp4"
             srt = out_dir / f"clip-{n:02}.srt"
             make_srt(words, start, end, srt)
-            subtitle_filter = f"subtitles={srt}:force_style='FontName=DejaVu Sans,FontSize=18,Bold=1,Outline=3,Shadow=1,Alignment=2,MarginV=220'"
+            styles = {
+                "bold_yellow": "FontName=DejaVu Sans,FontSize=19,Bold=1,PrimaryColour=&H0000D7FF,OutlineColour=&H00101010,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=230",
+                "clean_white": "FontName=DejaVu Sans,FontSize=17,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00101010,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=210",
+                "creator_pink": "FontName=DejaVu Sans,FontSize=19,Bold=1,PrimaryColour=&H00D68CFF,OutlineColour=&H00101010,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=230"
+            }
+            caption_style = row.get("caption_style") or "bold_yellow"
+            style = styles.get(caption_style, styles["bold_yellow"])
+            subtitle_filter = f"subtitles={srt}:force_style='{style}'"
             run(["ffmpeg", "-y", "-ss", str(start), "-i", str(source), "-t", str(end-start),
                  "-vf", f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,{subtitle_filter}",
                  "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(mp4)])
