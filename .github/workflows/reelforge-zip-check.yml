@@ -59,11 +59,13 @@ jobs:
 
       - name: Install dependencies and run tests
         working-directory: /tmp/reelforge-src/reelforge
+        env:
+          PYTHONPATH: /tmp/reelforge-src/reelforge
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest
-          pytest -q
+          python -m pytest -q
 
       - name: Verify web entrypoint
         run: |
