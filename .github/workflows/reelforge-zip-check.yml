@@ -19,15 +19,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Verify and inspect uploaded archive
+      - name: Extract uploaded ReelForge archive
         run: |
           test -s reelforge-updated.zip
-          echo "=== ZIP CONTENTS ==="
           unzip -Z1 reelforge-updated.zip
           mkdir -p /tmp/reelforge-src
           unzip -q reelforge-updated.zip -d /tmp/reelforge-src
-          echo "=== TOP LEVEL ==="
-          find /tmp/reelforge-src -maxdepth 3 -type f | sort
+          echo "=== PROJECT README ==="
+          cat /tmp/reelforge-src/reelforge/README.md
+          echo "=== REQUIREMENTS ==="
+          cat /tmp/reelforge-src/reelforge/requirements.txt
+          echo "=== DOCKERFILE ==="
+          cat /tmp/reelforge-src/reelforge/Dockerfile
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -38,7 +41,7 @@ jobs:
         run: |
           python - <<'PY'
           import pathlib, py_compile, sys
-          root = pathlib.Path("/tmp/reelforge-src")
+          root = pathlib.Path("/tmp/reelforge-src/reelforge")
           files = list(root.rglob("*.py"))
           print(f"Python files found: {len(files)}")
           failures = []
@@ -54,11 +57,16 @@ jobs:
           print("Python syntax check passed.")
           PY
 
-      - name: Validate web entrypoint and dependencies
+      - name: Install dependencies and run tests
+        working-directory: /tmp/reelforge-src/reelforge
         run: |
-          ROOT="$(find /tmp/reelforge-src -type f \( -name index.html -o -name requirements.txt \) -printf '%h\n' | sort -u)"
-          echo "Detected web/dependency directories:"
-          printf '%s\n' "$ROOT"
-          find /tmp/reelforge-src -maxdepth 4 -type f \( -name index.html -o -name requirements.txt -o -name Dockerfile -o -name pyproject.toml \) -print
-          test -n "$(find /tmp/reelforge-src -type f -name index.html -print -quit)"
-          echo "ReelForge archive extraction and entrypoint check passed."
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+          pytest -q
+
+      - name: Verify web entrypoint
+        run: |
+          test -s /tmp/reelforge-src/reelforge/web/index.html
+          test -s /tmp/reelforge-src/reelforge/web/manifest.json
+          echo "ReelForge frontend entrypoint checks passed."
