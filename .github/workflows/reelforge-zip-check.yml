@@ -108,10 +108,10 @@ jobs:
               assert "paths" in schema, "OpenAPI schema has no paths"
               print(f"OpenAPI OK; {len(schema['paths'])} API paths registered")
 
-              if "/" in paths:
-                  page = client.get("/")
-                  assert page.status_code < 500, f"Homepage returned {page.status_code}"
-                  print(f"Homepage response: {page.status_code}")
+              page = client.get("/")
+              assert page.status_code == 200, f"Homepage returned {page.status_code}"
+              assert "text/html" in page.headers.get("content-type", ""), "Homepage is not HTML"
+              print(f"Homepage served successfully: HTTP {page.status_code}")
           PY
 
       - name: Verify web entrypoint
