@@ -25,3 +25,8 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m py_compile clip-ai/backend/app.py clip-ai/backend/worker.py
+      - name: Check SQL security invariants
+        run: |
+          ! grep -Eiq 'security definer|auth\.role\(' clip-ai/supabase/schema.sql
+          grep -Eiq 'enable row level security' clip-ai/supabase/schema.sql
+          grep -Eiq 'grant execute .* to service_role' clip-ai/supabase/schema.sql
