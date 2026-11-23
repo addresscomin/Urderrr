@@ -38,6 +38,10 @@ async def create_job(file: UploadFile = File(...), authorization: str | None = H
     suffix = pathlib.Path(file.filename or "source.mp4").suffix.lower()
     if suffix not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
         raise HTTPException(415, "Upload MP4, MOV, MKV, WEBM or M4V")
+    # The service-role key stays server-side. The quota RPC is restricted to service_role.
+    quota = supabase.rpc("check_monthly_clip_quota", {"p_user_id": str(user.id)}).execute()
+    if quota.data is not True:
+        raise HTTPException(429, "Monthly free quota reached (20 clips). Try next month.")
     job_id = str(uuid.uuid4())
     upload_dir = DATA_DIR / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -53,17 +57,13 @@ async def create_job(file: UploadFile = File(...), authorization: str | None = H
                 out.write(chunk)
         if size == 0:
             raise HTTPException(400, "The uploaded file is empty")
-        quota = supabase.rpc("claim_monthly_clip_quota", {"p_user_id": str(user.id)}).execute()
-        if quota.data is not True:
-            target.unlink(missing_ok=True)
-            raise HTTPException(429, "Monthly free quota reached (20 clips). Try next month.")
         supabase.table("clip_jobs").insert({
             "id": job_id, "user_id": str(user.id), "status": "queued",
             "source_name": file.filename or "video", "source_path": str(target),
             "created_at": datetime.now(timezone.utc).isoformat()
         }).execute()
         queue.enqueue("worker.process_job", job_id, job_timeout=60 * 60 * 12, result_ttl=3600, failure_ttl=86400)
-        return {"job_id": job_id, "status": "queued", "quota_reserved": 1}
+        return {"job_id": job_id, "status": "queued"}
     except HTTPException:
         target.unlink(missing_ok=True)
         raise
@@ -77,7 +77,7 @@ def list_jobs(authorization: str | None = Header(default=None)):
     result = supabase.table("clip_jobs").select("id,status,source_name,error,created_at").eq("user_id", str(user.id)).order("created_at", desc=True).limit(30).execute()
     jobs = result.data or []
     for job in jobs:
-        clips = supabase.table("clips").select("id,title,duration_seconds,storage_path,created_at").eq("job_id", job["id"]).order("created_at").execute()
+        clips = supabase.table("clips").select("id,title,duration_seconds,storage_path,created_at").eq("job_id", job["id"]).eq("user_id", str(user.id)).order("created_at").execute()
         job["clips"] = []
         for clip in clips.data or []:
             signed = supabase.storage.from_("clips").create_signed_url(clip["storage_path"], 3600)
