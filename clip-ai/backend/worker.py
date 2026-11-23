@@ -1,4 +1,4 @@
-import os, re, json, pathlib, subprocess, tempfile
+import os, pathlib, subprocess
 from datetime import datetime, timezone
 from supabase import create_client
 from faster_whisper import WhisperModel
@@ -39,21 +39,22 @@ def choose_windows(segments, total, limit=5):
 
 def make_srt(words, start, end, out_path):
     lines, idx, chunk = [], 1, []
+    def stamp(value):
+        ms = int(max(0, value) * 1000)
+        h, ms = divmod(ms, 3600000); m, ms = divmod(ms, 60000); s, ms = divmod(ms, 1000)
+        return f"{h:02}:{m:02}:{s:02},{ms:03}"
     for word in words:
         t = float(word.start)
         if start <= t <= end:
             chunk.append(word)
             if len(chunk) >= 7 or word.word.strip().endswith((".", "?", "!", ",")):
                 a, b = max(0, chunk[0].start - start), max(0.1, chunk[-1].end - start)
-                def stamp(v):
-                    ms = int(v * 1000); h, ms = divmod(ms, 3600000); m, ms = divmod(ms, 60000); s, ms = divmod(ms, 1000)
-                    return f"{h:02}:{m:02}:{s:02},{ms:03}"
                 text = " ".join(w.word.strip() for w in chunk).replace("--", "—")
                 lines += [str(idx), f"{stamp(a)} --> {stamp(b)}", text, ""]
                 idx += 1; chunk = []
     if chunk:
         a, b = max(0, chunk[0].start - start), max(0.1, chunk[-1].end - start)
-        lines += [str(idx), f"00:00:{a:05.2f}".replace(".", ",") + " --> " + f"00:00:{b:05.2f}".replace(".", ","), " ".join(w.word.strip() for w in chunk), ""]
+        lines += [str(idx), f"{stamp(a)} --> {stamp(b)}", " ".join(w.word.strip() for w in chunk), ""]
     pathlib.Path(out_path).write_text("\n".join(lines), encoding="utf-8")
 
 def process_job(job_id):
@@ -62,6 +63,7 @@ def process_job(job_id):
     source = pathlib.Path(row["source_path"])
     out_dir = DATA_DIR / "outputs" / job_id
     out_dir.mkdir(parents=True, exist_ok=True)
+    created = 0
     try:
         db.table("clip_jobs").update({"status": "processing"}).eq("id", job_id).execute()
         total = duration_seconds(source)
@@ -78,19 +80,26 @@ def process_job(job_id):
         if not windows:
             windows = [{"start": s, "end": min(total, s + 30), "score": 0.1, "text": "Highlight"} for s in range(0, max(1, int(total - 20)), 45)][:5]
         for n, clip in enumerate(windows, 1):
+            # Quota is charged per finished clip, not per source video.
+            quota = db.rpc("claim_monthly_clip_quota", {"p_user_id": row["user_id"]}).execute()
+            if quota.data is not True:
+                break
             start, end = clip["start"], min(clip["end"], total)
             mp4 = out_dir / f"clip-{n:02}.mp4"
             srt = out_dir / f"clip-{n:02}.srt"
             make_srt(words, start, end, srt)
-            # 9:16 center crop. Captions are delivered as SRT for editable styling in the editor.
+            subtitle_filter = f"subtitles={srt}:force_style='FontName=DejaVu Sans,FontSize=18,Bold=1,Outline=3,Shadow=1,Alignment=2,MarginV=220'"
             run(["ffmpeg", "-y", "-ss", str(start), "-i", str(source), "-t", str(end-start),
-                 "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30",
+                 "-vf", f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,{subtitle_filter}",
                  "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(mp4)])
             storage_path = f"{row['user_id']}/{job_id}/clip-{n:02}.mp4"
             db.storage.from_("clips").upload(storage_path, mp4.read_bytes(), {"content-type": "video/mp4", "upsert": "true"})
             srt_path = f"{row['user_id']}/{job_id}/clip-{n:02}.srt"
             db.storage.from_("clips").upload(srt_path, srt.read_bytes(), {"content-type": "application/x-subrip", "upsert": "true"})
             db.table("clips").insert({"job_id": job_id, "user_id": row["user_id"], "title": f"AI Highlight {n}", "duration_seconds": round(end-start, 2), "storage_path": storage_path, "captions_path": srt_path, "score": round(clip["score"], 3)}).execute()
+            created += 1
+        if created == 0:
+            raise ValueError("No clip quota remaining or no suitable highlights were found")
         db.table("clip_jobs").update({"status": "completed", "completed_at": datetime.now(timezone.utc).isoformat()}).eq("id", job_id).execute()
     except Exception as exc:
         db.table("clip_jobs").update({"status": "failed", "error": str(exc)[:500]}).eq("id", job_id).execute()
