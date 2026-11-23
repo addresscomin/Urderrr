@@ -11,6 +11,7 @@ create table if not exists public.clip_jobs (
   user_id uuid not null references auth.users(id) on delete cascade,
   source_name text not null,
   source_path text not null,
+  caption_style text not null default 'bold_yellow' check (caption_style in ('bold_yellow','clean_white','creator_pink')),
   status text not null default 'queued' check (status in ('queued','processing','completed','failed')),
   error text,
   created_at timestamptz not null default now(),
@@ -34,13 +35,17 @@ alter table public.clips enable row level security;
 
 drop policy if exists "users read own clip jobs" on public.clip_jobs;
 create policy "users read own clip jobs" on public.clip_jobs
-  for select to authenticated using ((select auth.uid()) = user_id);
+  for select to authenticated using ((select auth.uid()) = user_id and coalesce(((select auth.jwt()) ->> 'is_anonymous')::boolean, false) = false);
 drop policy if exists "users read own clips" on public.clips;
 create policy "users read own clips" on public.clips
   for select to authenticated using ((select auth.uid()) = user_id);
 drop policy if exists "users read own quota" on public.clip_usage;
 create policy "users read own quota" on public.clip_usage
   for select to authenticated using ((select auth.uid()) = user_id);
+
+create index if not exists clip_jobs_user_created_idx on public.clip_jobs(user_id, created_at desc);
+create index if not exists clips_job_created_idx on public.clips(job_id, created_at);
+create index if not exists clips_user_created_idx on public.clips(user_id, created_at desc);
 
 grant select on public.clip_usage, public.clip_jobs, public.clips to authenticated;
 grant all on public.clip_usage, public.clip_jobs, public.clips to service_role;
