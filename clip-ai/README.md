@@ -31,7 +31,7 @@ This build accepts uploaded files that the user owns or is authorized to process
 - A free web host generally sleeps, limits disk/CPU, or restricts long jobs. A 10-hour stream needs a persistent worker, substantial RAM/CPU, disk space and bandwidth; no service can honestly promise unlimited free 10-hour processing.
 
 ## Quota
-The Postgres quota claim is atomic and caps completed-clip reservations at 20 per user per calendar month. The frontend displays the current remaining count. A failed job can consume a reservation if it fails after claiming one; production billing should add a reservation-release/refund path.
+The Postgres quota claim is atomic and caps clip reservations at 20 per user per calendar month. The frontend displays the current remaining count. If an individual clip fails during rendering or storage, its reservation is released. A worker crash or forced shutdown between reservation and completion can still leave a reservation behind; production deployment should add stale-job reconciliation.
 
 ## Security
 - Service-role credentials are backend-only.
