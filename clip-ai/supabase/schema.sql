@@ -27,29 +27,37 @@ create table if not exists public.clips (
   score numeric,
   created_at timestamptz not null default now()
 );
+
 alter table public.clip_usage enable row level security;
 alter table public.clip_jobs enable row level security;
 alter table public.clips enable row level security;
-drop policy if exists "users read own clip jobs" on public.clip_jobs;
-create policy "users read own clip jobs" on public.clip_jobs for select using (auth.uid() = user_id);
-drop policy if exists "users read own clips" on public.clips;
-create policy "users read own clips" on public.clips for select using (auth.uid() = user_id);
-drop policy if exists "users read own quota" on public.clip_usage;
-create policy "users read own quota" on public.clip_usage for select using (auth.uid() = user_id);
 
+drop policy if exists "users read own clip jobs" on public.clip_jobs;
+create policy "users read own clip jobs" on public.clip_jobs
+  for select to authenticated using ((select auth.uid()) = user_id);
+drop policy if exists "users read own clips" on public.clips;
+create policy "users read own clips" on public.clips
+  for select to authenticated using ((select auth.uid()) = user_id);
+drop policy if exists "users read own quota" on public.clip_usage;
+create policy "users read own quota" on public.clip_usage
+  for select to authenticated using ((select auth.uid()) = user_id);
+
+grant select on public.clip_usage, public.clip_jobs, public.clips to authenticated;
+grant all on public.clip_usage, public.clip_jobs, public.clips to service_role;
+
+-- Invoker-rights RPCs are callable only by the trusted backend service_role.
 create or replace function public.check_monthly_clip_quota(p_user_id uuid)
-returns boolean language sql security definer set search_path = public
+returns boolean language sql security invoker set search_path = public
 as $$
   select coalesce((select clips_reserved < 20 from public.clip_usage
     where user_id = p_user_id and month_start = date_trunc('month', now())::date), true);
 $$;
 
 create or replace function public.claim_monthly_clip_quota(p_user_id uuid)
-returns boolean language plpgsql security definer set search_path = public
+returns boolean language plpgsql security invoker set search_path = public
 as $$
 declare current_count integer;
 begin
-  if auth.role() <> 'service_role' then raise exception 'service role required'; end if;
   insert into public.clip_usage(user_id, month_start, clips_reserved)
   values (p_user_id, date_trunc('month', now())::date, 1)
   on conflict (user_id, month_start)
