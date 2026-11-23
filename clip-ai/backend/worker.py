@@ -1,4 +1,5 @@
 import os, pathlib, shutil, subprocess
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from supabase import create_client
 from faster_whisper import WhisperModel
@@ -8,6 +9,7 @@ SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 DATA_DIR = pathlib.Path(os.getenv("DATA_DIR", "/data"))
 db = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 _model = None
+TRANSCRIBE_CHUNK_SECONDS = 1800
 
 def run(cmd):
     subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -18,7 +20,7 @@ def duration_seconds(path):
 
 def choose_windows(segments, total, limit=5):
     candidates = []
-    cues = ("because", "secret", "important", "never", "always", "mistake", "amazing", "crazy", "why", "how", "best", "worst", "remember", "actually", "finally", "incredible", "problem", "solution", "listen")
+    cues = ("because", "secret", "important", "never", "always", "mistake", "amazing", "crazy", "why", "how", "best", "worst", "remember", "actually", "finally", "incredible", "problem", "solution", "listen", "kyun", "kaise", "dekho", "suno", "galti", "sach", "zabardast", "lekin", "akhir", "क्या", "क्यों", "कैसे", "देखो", "सुनो", "गलती", "सच", "लेकिन", "आखिर", "اہم", "کیوں", "کیسے", "دیکھو", "سنو")
     for seg in segments:
         start = max(0, float(seg.start) - 7)
         end = min(total, start + 35)
@@ -27,6 +29,7 @@ def choose_windows(segments, total, limit=5):
         text = (seg.text or "").strip()
         score = min(len(text) / 220, 1.0) + sum(0.22 for cue in cues if cue in text.lower())
         score += min(max(float(seg.end) - float(seg.start), 0) / 12, 0.4)
+        score += 0.25 if "?" in text or "!" in text else 0
         candidates.append({"start": start, "end": end, "score": score, "text": text})
     candidates.sort(key=lambda x: x["score"], reverse=True)
     chosen = []
@@ -57,8 +60,29 @@ def make_srt(words, start, end, out_path):
         lines += [str(idx), f"{stamp(a)} --> {stamp(b)}", " ".join(w.word.strip() for w in chunk), ""]
     pathlib.Path(out_path).write_text("\n".join(lines), encoding="utf-8")
 
-def process_job(job_id):
+def transcribe_long_source(source, total, out_dir):
     global _model
+    if _model is None:
+        _model = WhisperModel("small", device="cpu", compute_type="int8")
+    all_segments, all_words = [], []
+    for offset in range(0, int(total) + TRANSCRIBE_CHUNK_SECONDS - 1, TRANSCRIBE_CHUNK_SECONDS):
+        chunk_seconds = min(TRANSCRIBE_CHUNK_SECONDS, total - offset)
+        chunk_path = out_dir / f"audio-{offset:08}.wav"
+        run(["ffmpeg", "-y", "-ss", str(offset), "-i", str(source), "-t", str(chunk_seconds), "-vn", "-ac", "1", "-ar", "16000", str(chunk_path)])
+        segments_iter, info = _model.transcribe(str(chunk_path), word_timestamps=True, vad_filter=True)
+        for seg in segments_iter:
+            shifted_words = []
+            for word in (seg.words or []):
+                if word.start is None or word.end is None:
+                    continue
+                shifted = SimpleNamespace(start=offset + float(word.start), end=offset + float(word.end), word=word.word)
+                shifted_words.append(shifted)
+                all_words.append(shifted)
+            all_segments.append(SimpleNamespace(start=offset + float(seg.start), end=offset + float(seg.end), text=seg.text, words=shifted_words))
+        chunk_path.unlink(missing_ok=True)
+    return all_segments, all_words
+
+def process_job(job_id):
     row = db.table("clip_jobs").select("*").eq("id", job_id).single().execute().data
     source = pathlib.Path(row["source_path"])
     out_dir = DATA_DIR / "outputs" / job_id
@@ -69,13 +93,7 @@ def process_job(job_id):
         total = duration_seconds(source)
         if total < 20:
             raise ValueError("Video must be at least 20 seconds long")
-        if _model is None:
-            _model = WhisperModel("small", device="cpu", compute_type="int8")
-        audio = out_dir / "audio.wav"
-        run(["ffmpeg", "-y", "-i", str(source), "-vn", "-ac", "1", "-ar", "16000", str(audio)])
-        segments, info = _model.transcribe(str(audio), word_timestamps=True, vad_filter=True)
-        segments = list(segments)
-        words = [w for seg in segments for w in (seg.words or [])]
+        segments, words = transcribe_long_source(source, total, out_dir)
         windows = choose_windows(segments, total)
         if not windows:
             windows = [{"start": s, "end": min(total, s + 30), "score": 0.1, "text": "Highlight"} for s in range(0, max(1, int(total - 20)), 45)][:5]
