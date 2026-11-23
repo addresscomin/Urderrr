@@ -10,7 +10,7 @@ on:
       - ".github/workflows/reelforge-zip-check.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   inspect-and-build:
@@ -19,16 +19,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract uploaded ReelForge archive
+      - name: Extract and repair uploaded ReelForge archive
         run: |
           test -s reelforge-updated.zip
-          unzip -Z1 reelforge-updated.zip
           mkdir -p /tmp/reelforge-src
           unzip -q reelforge-updated.zip -d /tmp/reelforge-src
+          REQ=/tmp/reelforge-src/reelforge/requirements.txt
+          if ! grep -qxF requests "$REQ"; then
+            echo "requests" >> "$REQ"
+            echo "Fixed missing runtime dependency: requests"
+            rm -f reelforge-updated.zip
+            cd /tmp/reelforge-src
+            zip -qr "$GITHUB_WORKSPACE/reelforge-updated.zip" reelforge
+            cd "$GITHUB_WORKSPACE"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add reelforge-updated.zip
+            git commit -m "Fix ReelForge missing requests dependency"
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          else
+            echo "requests dependency already present."
+          fi
           echo "=== PROJECT README ==="
           cat /tmp/reelforge-src/reelforge/README.md
           echo "=== REQUIREMENTS ==="
-          cat /tmp/reelforge-src/reelforge/requirements.txt
+          cat "$REQ"
           echo "=== DOCKERFILE ==="
           cat /tmp/reelforge-src/reelforge/Dockerfile
           echo "=== API ENTRYPOINT ==="
