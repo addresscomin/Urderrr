@@ -1,4 +1,4 @@
-import os, pathlib, subprocess
+import os, pathlib, shutil, subprocess
 from datetime import datetime, timezone
 from supabase import create_client
 from faster_whisper import WhisperModel
@@ -80,7 +80,6 @@ def process_job(job_id):
         if not windows:
             windows = [{"start": s, "end": min(total, s + 30), "score": 0.1, "text": "Highlight"} for s in range(0, max(1, int(total - 20)), 45)][:5]
         for n, clip in enumerate(windows, 1):
-            # Quota is charged per finished clip, not per source video.
             quota = db.rpc("claim_monthly_clip_quota", {"p_user_id": row["user_id"]}).execute()
             if quota.data is not True:
                 break
@@ -104,3 +103,6 @@ def process_job(job_id):
     except Exception as exc:
         db.table("clip_jobs").update({"status": "failed", "error": str(exc)[:500]}).eq("id", job_id).execute()
         raise
+    finally:
+        source.unlink(missing_ok=True)
+        shutil.rmtree(out_dir, ignore_errors=True)
