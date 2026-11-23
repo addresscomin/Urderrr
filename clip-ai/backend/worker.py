@@ -101,27 +101,31 @@ def process_job(job_id):
             quota = db.rpc("claim_monthly_clip_quota", {"p_user_id": row["user_id"]}).execute()
             if quota.data is not True:
                 break
-            start, end = clip["start"], min(clip["end"], total)
-            mp4 = out_dir / f"clip-{n:02}.mp4"
-            srt = out_dir / f"clip-{n:02}.srt"
-            make_srt(words, start, end, srt)
-            styles = {
-                "bold_yellow": "FontName=DejaVu Sans,FontSize=19,Bold=1,PrimaryColour=&H0000D7FF,OutlineColour=&H00101010,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=230",
-                "clean_white": "FontName=DejaVu Sans,FontSize=17,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00101010,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=210",
-                "creator_pink": "FontName=DejaVu Sans,FontSize=19,Bold=1,PrimaryColour=&H00D68CFF,OutlineColour=&H00101010,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=230"
-            }
-            caption_style = row.get("caption_style") or "bold_yellow"
-            style = styles.get(caption_style, styles["bold_yellow"])
-            subtitle_filter = f"subtitles={srt}:force_style='{style}'"
-            run(["ffmpeg", "-y", "-ss", str(start), "-i", str(source), "-t", str(end-start),
-                 "-vf", f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,{subtitle_filter}",
-                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(mp4)])
-            storage_path = f"{row['user_id']}/{job_id}/clip-{n:02}.mp4"
-            db.storage.from_("clips").upload(storage_path, mp4.read_bytes(), {"content-type": "video/mp4", "upsert": "true"})
-            srt_path = f"{row['user_id']}/{job_id}/clip-{n:02}.srt"
-            db.storage.from_("clips").upload(srt_path, srt.read_bytes(), {"content-type": "application/x-subrip", "upsert": "true"})
-            db.table("clips").insert({"job_id": job_id, "user_id": row["user_id"], "title": f"AI Highlight {n}", "duration_seconds": round(end-start, 2), "storage_path": storage_path, "captions_path": srt_path, "score": round(clip["score"], 3)}).execute()
-            created += 1
+            try:
+                start, end = clip["start"], min(clip["end"], total)
+                mp4 = out_dir / f"clip-{n:02}.mp4"
+                srt = out_dir / f"clip-{n:02}.srt"
+                make_srt(words, start, end, srt)
+                styles = {
+                    "bold_yellow": "FontName=DejaVu Sans,FontSize=19,Bold=1,PrimaryColour=&H0000D7FF,OutlineColour=&H00101010,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=230",
+                    "clean_white": "FontName=DejaVu Sans,FontSize=17,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00101010,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=210",
+                    "creator_pink": "FontName=DejaVu Sans,FontSize=19,Bold=1,PrimaryColour=&H00D68CFF,OutlineColour=&H00101010,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=230"
+                }
+                caption_style = row.get("caption_style") or "bold_yellow"
+                style = styles.get(caption_style, styles["bold_yellow"])
+                subtitle_filter = f"subtitles={srt}:force_style='{style}'"
+                run(["ffmpeg", "-y", "-ss", str(start), "-i", str(source), "-t", str(end-start),
+                     "-vf", f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,{subtitle_filter}",
+                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(mp4)])
+                storage_path = f"{row['user_id']}/{job_id}/clip-{n:02}.mp4"
+                db.storage.from_("clips").upload(storage_path, mp4.read_bytes(), {"content-type": "video/mp4", "upsert": "true"})
+                srt_path = f"{row['user_id']}/{job_id}/clip-{n:02}.srt"
+                db.storage.from_("clips").upload(srt_path, srt.read_bytes(), {"content-type": "application/x-subrip", "upsert": "true"})
+                db.table("clips").insert({"job_id": job_id, "user_id": row["user_id"], "title": f"AI Highlight {n}", "duration_seconds": round(end-start, 2), "storage_path": storage_path, "captions_path": srt_path, "score": round(clip["score"], 3)}).execute()
+                created += 1
+            except Exception:
+                db.rpc("release_monthly_clip_quota", {"p_user_id": row["user_id"]}).execute()
+                raise
         if created == 0:
             raise ValueError("No clip quota remaining or no suitable highlights were found")
         db.table("clip_jobs").update({"status": "completed", "completed_at": datetime.now(timezone.utc).isoformat()}).eq("id", job_id).execute()
