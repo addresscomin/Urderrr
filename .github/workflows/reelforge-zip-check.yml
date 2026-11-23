@@ -31,6 +31,10 @@ jobs:
           cat /tmp/reelforge-src/reelforge/requirements.txt
           echo "=== DOCKERFILE ==="
           cat /tmp/reelforge-src/reelforge/Dockerfile
+          echo "=== API ENTRYPOINT ==="
+          sed -n '1,260p' /tmp/reelforge-src/reelforge/app/main.py
+          echo "=== APP CONFIG ==="
+          sed -n '1,220p' /tmp/reelforge-src/reelforge/app/config.py
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -66,6 +70,34 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
           python -m pytest -q
+
+      - name: Smoke-test FastAPI application
+        working-directory: /tmp/reelforge-src/reelforge
+        env:
+          PYTHONPATH: /tmp/reelforge-src/reelforge
+          DATA_DIR: /tmp/reelforge-smoke-data
+        run: |
+          python - <<'PY'
+          from fastapi.testclient import TestClient
+          from app.main import app
+
+          paths = sorted({route.path for route in app.routes if hasattr(route, "path")})
+          print("Registered API routes:")
+          for path in paths:
+              print(path)
+
+          with TestClient(app) as client:
+              response = client.get("/openapi.json")
+              assert response.status_code == 200, f"OpenAPI returned {response.status_code}"
+              schema = response.json()
+              assert "paths" in schema, "OpenAPI schema has no paths"
+              print(f"OpenAPI OK; {len(schema['paths'])} API paths registered")
+
+              if "/" in paths:
+                  page = client.get("/")
+                  assert page.status_code < 500, f"Homepage returned {page.status_code}"
+                  print(f"Homepage response: {page.status_code}")
+          PY
 
       - name: Verify web entrypoint
         run: |
